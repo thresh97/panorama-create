@@ -1,5 +1,8 @@
 # panorama-create
 
+> **FOR LAB AND DEMONSTRATION USE ONLY.**
+> This code is provided without warranty of any kind, express or implied. It is not validated for production use. No support is provided. Use at your own risk.
+
 Terraform deployments for a Palo Alto Networks Panorama management VM across cloud providers.
 
 This is **Phase 1** of a two-phase deployment workflow. After deploying Panorama here, bootstrap and configure it, then use the network ID output in the [vmseries-architectures](https://github.com/thresh97/vmseries-architectures) deployment to peer firewalls to Panorama.
