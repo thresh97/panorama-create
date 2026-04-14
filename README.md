@@ -13,7 +13,7 @@ This is **Phase 1** of a two-phase deployment workflow. After deploying Panorama
 |----------|-----------|--------|
 | Azure | [`azure/`](azure/) | Available |
 | AWS | [`aws/`](aws/) | Available |
-| GCP | `gcp/` | Coming soon |
+| GCP | [`gcp/`](gcp/) | Available |
 
 ## Two-Phase Deployment Workflow
 
