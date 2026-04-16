@@ -45,13 +45,17 @@ locals {
 # --------------------------------------------------------------------------
 # NOTE: You must subscribe to the Panorama BYOL listing in AWS Marketplace
 # before deploying: https://aws.amazon.com/marketplace/pp/prodview-paloaltonetworks-panorama
-#
-# To find AMI IDs for your region:
-#   aws ec2 describe-images \
-#     --owners aws-marketplace \
-#     --filters "Name=name,Values=PA-Panorama-AWS-${var.panorama_version}*" \
-#     --query 'sort_by(Images, &CreationDate)[-1].[ImageId,Name]' \
-#     --output text
+
+/*
+To find AMI IDs for your region:
+
+  VERSION=11.2.8
+  aws ec2 describe-images \
+    --owners aws-marketplace \
+    --filters "Name=name,Values=Panorama-AWS-${VERSION}*" \
+    --query 'sort_by(Images, &CreationDate)[-1].[ImageId,Name]' \
+    --output text
+*/
 
 data "aws_ami" "panorama" {
   count       = var.panorama_ami_id == null ? 1 : 0
@@ -60,7 +64,7 @@ data "aws_ami" "panorama" {
 
   filter {
     name   = "name"
-    values = ["PA-Panorama-AWS-${var.panorama_version}*"]
+    values = ["Panorama-AWS-${var.panorama_version}*"]
   }
 
   filter {

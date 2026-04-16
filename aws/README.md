@@ -17,9 +17,10 @@ This is **Phase 1** of a two-phase deployment workflow. After deploying Panorama
 
 To find the AMI ID for your region and version after subscribing:
 ```bash
+VERSION=11.2.8   # set to target version
 aws ec2 describe-images \
   --owners aws-marketplace \
-  --filters "Name=name,Values=PA-Panorama-AWS-11.2.8*" \
+  --filters "Name=name,Values=Panorama-AWS-${VERSION}*" \
   --query 'sort_by(Images, &CreationDate)[-1].[ImageId,Name]' \
   --output text
 ```
