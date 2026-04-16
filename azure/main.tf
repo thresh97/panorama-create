@@ -64,6 +64,8 @@ resource "azurerm_virtual_network" "mgmt_vnet" {
   resource_group_name = azurerm_resource_group.mgmt.name
 }
 
+# Single subnet shared by all instances — Azure subnets are not AZ-scoped.
+# Instances are pinned to different zones via the VM and public IP zone argument.
 resource "azurerm_subnet" "panorama" {
   name                 = "panorama"
   resource_group_name  = azurerm_resource_group.mgmt.name
@@ -128,18 +130,25 @@ resource "azurerm_subnet_network_security_group_association" "panorama" {
 }
 
 # --------------------------------------------------------------------------
-# 4. VIRTUAL MACHINE - PANORAMA
+# 4. VIRTUAL MACHINES - PANORAMA
 # --------------------------------------------------------------------------
+
+# Standard SKU public IPs support zone pinning. One per instance.
+# Zones 1, 2, 3 map to instances 0, 1, 2 respectively.
 resource "azurerm_public_ip" "panorama_pip" {
-  name                = "${local.full_prefix}-panorama-pip"
+  count               = var.instance_count
+  name                = count.index == 0 ? "${local.full_prefix}-panorama-pip" : "${local.full_prefix}-panorama-pip-${count.index + 1}"
   location            = azurerm_resource_group.mgmt.location
   resource_group_name = azurerm_resource_group.mgmt.name
   allocation_method   = "Static"
   sku                 = "Standard"
+  zones               = [tostring(count.index + 1)]
 }
 
+# Private IPs .4, .5, .6 within the /28 subnet.
 resource "azurerm_network_interface" "panorama_nic" {
-  name                = "${local.full_prefix}-panorama-nic"
+  count               = var.instance_count
+  name                = count.index == 0 ? "${local.full_prefix}-panorama-nic" : "${local.full_prefix}-panorama-nic-${count.index + 1}"
   location            = azurerm_resource_group.mgmt.location
   resource_group_name = azurerm_resource_group.mgmt.name
 
@@ -147,18 +156,20 @@ resource "azurerm_network_interface" "panorama_nic" {
     name                          = "ipconfig1"
     subnet_id                     = azurerm_subnet.panorama.id
     private_ip_address_allocation = "Static"
-    private_ip_address            = cidrhost(cidrsubnet(var.mgmt_vnet_cidr, 4, 0), 4)
-    public_ip_address_id          = azurerm_public_ip.panorama_pip.id
+    private_ip_address            = cidrhost(cidrsubnet(var.mgmt_vnet_cidr, 4, 0), 4 + count.index)
+    public_ip_address_id          = azurerm_public_ip.panorama_pip[count.index].id
   }
 }
 
 resource "azurerm_linux_virtual_machine" "panorama" {
-  name                  = "${local.full_prefix}-panorama"
+  count                 = var.instance_count
+  name                  = count.index == 0 ? "${local.full_prefix}-panorama" : "${local.full_prefix}-panorama-${count.index + 1}"
   resource_group_name   = azurerm_resource_group.mgmt.name
   location              = azurerm_resource_group.mgmt.location
   size                  = var.panorama_vm_size
   admin_username        = "panadmin"
-  network_interface_ids = [azurerm_network_interface.panorama_nic.id]
+  zone                  = tostring(count.index + 1)
+  network_interface_ids = [azurerm_network_interface.panorama_nic[count.index].id]
 
   admin_ssh_key {
     username   = "panadmin"
@@ -187,7 +198,25 @@ resource "azurerm_linux_virtual_machine" "panorama" {
 }
 
 # --------------------------------------------------------------------------
-# 5. VARIABLES
+# 5. MIGRATION: moved blocks for existing single-instance deployments
+# --------------------------------------------------------------------------
+moved {
+  from = azurerm_public_ip.panorama_pip
+  to   = azurerm_public_ip.panorama_pip[0]
+}
+
+moved {
+  from = azurerm_network_interface.panorama_nic
+  to   = azurerm_network_interface.panorama_nic[0]
+}
+
+moved {
+  from = azurerm_linux_virtual_machine.panorama
+  to   = azurerm_linux_virtual_machine.panorama[0]
+}
+
+# --------------------------------------------------------------------------
+# 6. VARIABLES
 # --------------------------------------------------------------------------
 variable "subscription_id" {
   type = string
@@ -201,6 +230,17 @@ variable "deployment_code" {
 variable "create_marketplace_agreement" {
   type    = bool
   default = false
+}
+
+variable "instance_count" {
+  type        = number
+  default     = 1
+  description = "Number of Panorama instances. 1=standalone/LC, 2=HA pair, 3=Log Collector Group. Instances are pinned to separate availability zones (1, 2, 3). Verify zone availability in the target region."
+
+  validation {
+    condition     = contains([1, 2, 3], var.instance_count)
+    error_message = "instance_count must be 1, 2, or 3."
+  }
 }
 
 variable "prefix" {
@@ -236,11 +276,26 @@ variable "mgmt_vnet_cidr" {
 }
 
 # --------------------------------------------------------------------------
-# 6. OUTPUTS
+# 7. OUTPUTS
 # --------------------------------------------------------------------------
 output "panorama_public_ip" {
-  description = "Public IP address of the Panorama VM."
-  value       = azurerm_public_ip.panorama_pip.ip_address
+  description = "Public IP of the first Panorama instance. Use panorama_public_ips for all instances."
+  value       = azurerm_public_ip.panorama_pip[0].ip_address
+}
+
+output "panorama_public_ips" {
+  description = "Public IP addresses of all Panorama instances (index matches instance number)."
+  value       = azurerm_public_ip.panorama_pip[*].ip_address
+}
+
+output "panorama_private_ips" {
+  description = "Private IP addresses of all Panorama instances."
+  value       = azurerm_network_interface.panorama_nic[*].private_ip_address
+}
+
+output "panorama_zones" {
+  description = "Availability zones of all Panorama instances."
+  value       = azurerm_linux_virtual_machine.panorama[*].zone
 }
 
 output "panorama_vnet_id" {
@@ -253,5 +308,6 @@ output "environment_info" {
     tenant_id           = data.azurerm_client_config.current.tenant_id
     subscription_id     = var.subscription_id
     mgmt_resource_group = azurerm_resource_group.mgmt.name
+    instance_count      = var.instance_count
   }
 }

@@ -21,6 +21,10 @@ provider "google" {
 
 provider "random" {}
 
+data "google_compute_zones" "available" {
+  region = var.region
+}
+
 resource "random_string" "deploy_id" {
   length  = 3
   special = false
@@ -31,7 +35,6 @@ resource "random_string" "deploy_id" {
 locals {
   deploy_prefix  = var.deployment_code != null && var.deployment_code != "" ? var.deployment_code : random_string.deploy_id.result
   full_prefix    = "${local.deploy_prefix}-${var.prefix}"
-  zone           = var.zone != null ? var.zone : "${var.region}-b"
   panorama_image = var.panorama_image_name != null ? "projects/paloaltonetworksgcp-public/global/images/${var.panorama_image_name}" : data.google_compute_image.panorama[0].self_link
 }
 
@@ -63,6 +66,8 @@ resource "google_compute_network" "mgmt" {
   auto_create_subnetworks = false
 }
 
+# Single regional subnet shared by all instances — GCP subnets span all zones
+# in a region. Instances are pinned to different zones via the zone argument.
 resource "google_compute_subnetwork" "mgmt" {
   name          = "${local.full_prefix}-panorama-subnet"
   ip_cidr_range = cidrsubnet(var.mgmt_vpc_cidr, 4, 0)
@@ -108,17 +113,24 @@ resource "google_compute_firewall" "mgmt_allow_internal" {
 }
 
 # --------------------------------------------------------------------------
-# 4. VIRTUAL MACHINE - PANORAMA
+# 4. VIRTUAL MACHINES - PANORAMA
 # --------------------------------------------------------------------------
+
+# One external IP per instance.
 resource "google_compute_address" "panorama" {
-  name   = "${local.full_prefix}-panorama-ip"
+  count  = var.instance_count
+  name   = count.index == 0 ? "${local.full_prefix}-panorama-ip" : "${local.full_prefix}-panorama-ip-${count.index + 1}"
   region = var.region
 }
 
+# Instances distributed across zones in the region.
+# var.zone overrides the zone for single-instance deployments only.
+# Private IPs .4, .5, .6 within the /28 subnet.
 resource "google_compute_instance" "panorama" {
-  name         = "${local.full_prefix}-panorama"
+  count        = var.instance_count
+  name         = count.index == 0 ? "${local.full_prefix}-panorama" : "${local.full_prefix}-panorama-${count.index + 1}"
   machine_type = var.panorama_machine_type
-  zone         = local.zone
+  zone         = (var.instance_count == 1 && var.zone != null) ? var.zone : data.google_compute_zones.available.names[count.index]
 
   tags = ["panorama-mgmt"]
 
@@ -133,10 +145,10 @@ resource "google_compute_instance" "panorama" {
   network_interface {
     network    = google_compute_network.mgmt.name
     subnetwork = google_compute_subnetwork.mgmt.name
-    network_ip = cidrhost(cidrsubnet(var.mgmt_vpc_cidr, 4, 0), 4)
+    network_ip = cidrhost(cidrsubnet(var.mgmt_vpc_cidr, 4, 0), 4 + count.index)
 
     access_config {
-      nat_ip = google_compute_address.panorama.address
+      nat_ip = google_compute_address.panorama[count.index].address
     }
   }
 
@@ -146,7 +158,20 @@ resource "google_compute_instance" "panorama" {
 }
 
 # --------------------------------------------------------------------------
-# 5. VARIABLES
+# 5. MIGRATION: moved blocks for existing single-instance deployments
+# --------------------------------------------------------------------------
+moved {
+  from = google_compute_address.panorama
+  to   = google_compute_address.panorama[0]
+}
+
+moved {
+  from = google_compute_instance.panorama
+  to   = google_compute_instance.panorama[0]
+}
+
+# --------------------------------------------------------------------------
+# 6. VARIABLES
 # --------------------------------------------------------------------------
 variable "project_id" {
   type        = string
@@ -161,7 +186,18 @@ variable "region" {
 variable "zone" {
   type        = string
   default     = null
-  description = "GCP zone. Defaults to {region}-b."
+  description = "Zone override for single-instance deployments (instance_count = 1). Ignored when instance_count > 1 — instances are distributed across zones automatically."
+}
+
+variable "instance_count" {
+  type        = number
+  default     = 1
+  description = "Number of Panorama instances. 1=standalone/LC, 2=HA pair, 3=Log Collector Group. Instances are placed in separate zones automatically."
+
+  validation {
+    condition     = contains([1, 2, 3], var.instance_count)
+    error_message = "instance_count must be 1, 2, or 3."
+  }
 }
 
 variable "deployment_code" {
@@ -207,11 +243,26 @@ variable "panorama_image_name" {
 }
 
 # --------------------------------------------------------------------------
-# 6. OUTPUTS
+# 7. OUTPUTS
 # --------------------------------------------------------------------------
 output "panorama_public_ip" {
-  description = "Public IP address of the Panorama VM."
-  value       = google_compute_address.panorama.address
+  description = "Public IP of the first Panorama instance. Use panorama_public_ips for all instances."
+  value       = google_compute_address.panorama[0].address
+}
+
+output "panorama_public_ips" {
+  description = "Public IP addresses of all Panorama instances (index matches instance number)."
+  value       = google_compute_address.panorama[*].address
+}
+
+output "panorama_private_ips" {
+  description = "Private IP addresses of all Panorama instances."
+  value       = [for inst in google_compute_instance.panorama : inst.network_interface[0].network_ip]
+}
+
+output "panorama_zones" {
+  description = "Zones of all Panorama instances."
+  value       = google_compute_instance.panorama[*].zone
 }
 
 output "panorama_vpc_id" {
@@ -221,9 +272,9 @@ output "panorama_vpc_id" {
 
 output "environment_info" {
   value = {
-    project_id   = var.project_id
-    region       = var.region
-    zone         = local.zone
-    network_name = google_compute_network.mgmt.name
+    project_id     = var.project_id
+    region         = var.region
+    network_name   = google_compute_network.mgmt.name
+    instance_count = var.instance_count
   }
 }

@@ -7,5 +7,6 @@ mgmt_vpc_cidr          = "10.255.0.0/24"
 panorama_version       = "11.2.8"
 panorama_instance_type = "m5.4xlarge"
 
-# availability_zone    = "us-east-1a"   # Optional; defaults to first available AZ
+# instance_count       = 1              # 1=standalone/LC  2=HA pair  3=Log Collector Group
+# availability_zone    = "us-east-1a"  # Optional; single-instance only, ignored when instance_count > 1
 # panorama_ami_id      = "ami-xxxxxxxxxxxxxxxxx"  # Optional; overrides AMI lookup
