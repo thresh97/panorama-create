@@ -10,3 +10,5 @@ panorama_version = "11.2.8"
 panorama_vm_size = "Standard_D16s_v5"
 
 # instance_count   = 1  # 1=standalone/LC  2=HA pair  3=Log Collector Group
+
+# log_disk_size_gb = 2000  # Optional: additional Premium_LRS managed disk for Panorama logs (0 = none)

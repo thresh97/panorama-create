@@ -197,6 +197,25 @@ resource "azurerm_linux_virtual_machine" "panorama" {
   depends_on = [azurerm_marketplace_agreement.paloalto_panorama]
 }
 
+resource "azurerm_managed_disk" "panorama_logs" {
+  count                = var.log_disk_size_gb > 0 ? var.instance_count : 0
+  name                 = count.index == 0 ? "${local.full_prefix}-panorama-logs" : "${local.full_prefix}-panorama-logs-${count.index + 1}"
+  location             = azurerm_resource_group.mgmt.location
+  resource_group_name  = azurerm_resource_group.mgmt.name
+  storage_account_type = "Premium_LRS"
+  create_option        = "Empty"
+  disk_size_gb         = var.log_disk_size_gb
+  zone                 = tostring(count.index + 1)
+}
+
+resource "azurerm_virtual_machine_data_disk_attachment" "panorama_logs" {
+  count              = var.log_disk_size_gb > 0 ? var.instance_count : 0
+  managed_disk_id    = azurerm_managed_disk.panorama_logs[count.index].id
+  virtual_machine_id = azurerm_linux_virtual_machine.panorama[count.index].id
+  lun                = 0
+  caching            = "ReadWrite"
+}
+
 # --------------------------------------------------------------------------
 # 5. MIGRATION: moved blocks for existing single-instance deployments
 # --------------------------------------------------------------------------
@@ -273,6 +292,12 @@ variable "panorama_vm_size" {
 variable "mgmt_vnet_cidr" {
   type    = string
   default = "10.255.0.0/24"
+}
+
+variable "log_disk_size_gb" {
+  type        = number
+  default     = 0
+  description = "Size in GB of an additional Premium_LRS managed disk for Panorama logs. 0 = no additional disk. Recommended: 2000."
 }
 
 # --------------------------------------------------------------------------
