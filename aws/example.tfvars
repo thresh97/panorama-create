@@ -10,3 +10,4 @@ panorama_instance_type = "m5.4xlarge"
 # instance_count       = 1              # 1=standalone/LC  2=HA pair  3=Log Collector Group
 # availability_zone    = "us-east-1a"  # Optional; single-instance only, ignored when instance_count > 1
 # panorama_ami_id      = "ami-xxxxxxxxxxxxxxxxx"  # Optional; overrides AMI lookup
+# log_disk_count    = 0   # Number of 2000GB log disks per instance (0-24)

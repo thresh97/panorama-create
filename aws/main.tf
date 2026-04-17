@@ -210,6 +210,34 @@ resource "aws_eip_association" "panorama" {
   allocation_id = aws_eip.panorama[count.index].id
 }
 
+# log_disk_count × instance_count disks, each 2000 GB gp3.
+# count.index / log_disk_count → instance index
+# count.index % log_disk_count → disk-within-instance index
+locals {
+  total_log_disks = var.instance_count * var.log_disk_count
+}
+
+resource "aws_ebs_volume" "panorama_logs" {
+  count             = local.total_log_disks
+  availability_zone = aws_subnet.panorama[count.index / var.log_disk_count].availability_zone
+  size              = var.log_disk_size_gb
+  type              = "gp3"
+  tags = {
+    Name = (
+      count.index / var.log_disk_count == 0
+        ? "${local.full_prefix}-panorama-log-${count.index % var.log_disk_count + 1}"
+        : "${local.full_prefix}-panorama-${count.index / var.log_disk_count + 1}-log-${count.index % var.log_disk_count + 1}"
+    )
+  }
+}
+
+resource "aws_volume_attachment" "panorama_logs" {
+  count       = local.total_log_disks
+  device_name = "/dev/sd${substr("bcdefghijklmnopqrstuvwxyz", count.index % var.log_disk_count, 1)}"
+  volume_id   = aws_ebs_volume.panorama_logs[count.index].id
+  instance_id = aws_instance.panorama[count.index / var.log_disk_count].id
+}
+
 # --------------------------------------------------------------------------
 # 6. MIGRATION: moved blocks for existing single-instance deployments
 # --------------------------------------------------------------------------
@@ -302,6 +330,23 @@ variable "panorama_ami_id" {
   type        = string
   default     = null
   description = "Explicit AMI ID override. If null, the latest BYOL AMI matching panorama_version is looked up automatically."
+}
+
+variable "log_disk_count" {
+  type        = number
+  default     = 0
+  description = "Number of log disks to attach to each Panorama instance (0–24). Each disk is log_disk_size_gb GB."
+
+  validation {
+    condition     = var.log_disk_count >= 0 && var.log_disk_count <= 24
+    error_message = "log_disk_count must be between 0 and 24."
+  }
+}
+
+variable "log_disk_size_gb" {
+  type        = number
+  default     = 2000
+  description = "Size in GB of each log disk. Default 2000."
 }
 
 # --------------------------------------------------------------------------

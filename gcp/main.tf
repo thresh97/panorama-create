@@ -157,6 +157,29 @@ resource "google_compute_instance" "panorama" {
   }
 }
 
+locals {
+  total_log_disks = var.instance_count * var.log_disk_count
+}
+
+resource "google_compute_disk" "panorama_logs" {
+  count = local.total_log_disks
+  name  = (
+    count.index / var.log_disk_count == 0
+      ? "${local.full_prefix}-panorama-log-${count.index % var.log_disk_count + 1}"
+      : "${local.full_prefix}-panorama-${count.index / var.log_disk_count + 1}-log-${count.index % var.log_disk_count + 1}"
+  )
+  type  = "pd-ssd"
+  zone  = (var.instance_count == 1 && var.zone != null) ? var.zone : data.google_compute_zones.available.names[count.index / var.log_disk_count]
+  size  = var.log_disk_size_gb
+}
+
+resource "google_compute_attached_disk" "panorama_logs" {
+  count    = local.total_log_disks
+  disk     = google_compute_disk.panorama_logs[count.index].self_link
+  instance = google_compute_instance.panorama[count.index / var.log_disk_count].self_link
+  zone     = (var.instance_count == 1 && var.zone != null) ? var.zone : data.google_compute_zones.available.names[count.index / var.log_disk_count]
+}
+
 # --------------------------------------------------------------------------
 # 5. MIGRATION: moved blocks for existing single-instance deployments
 # --------------------------------------------------------------------------
@@ -240,6 +263,23 @@ variable "panorama_image_name" {
   type        = string
   default     = null
   description = "Explicit GCP image name override (e.g., 'panorama-1126'). If null, the latest image in the panorama_version family is used."
+}
+
+variable "log_disk_count" {
+  type        = number
+  default     = 0
+  description = "Number of pd-ssd log disks to attach to each Panorama instance (0–24). Each disk is log_disk_size_gb GB."
+
+  validation {
+    condition     = var.log_disk_count >= 0 && var.log_disk_count <= 24
+    error_message = "log_disk_count must be between 0 and 24."
+  }
+}
+
+variable "log_disk_size_gb" {
+  type        = number
+  default     = 2000
+  description = "Size in GB of each log disk. Default 2000."
 }
 
 # --------------------------------------------------------------------------

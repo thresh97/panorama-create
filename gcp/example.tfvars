@@ -11,3 +11,4 @@ panorama_machine_type = "n2-standard-16"
 # instance_count       = 1              # 1=standalone/LC  2=HA pair  3=Log Collector Group
 # zone                 = "us-east1-b"  # Optional; single-instance only, ignored when instance_count > 1
 # panorama_image_name  = "panorama-1126"     # Optional; overrides image family lookup
+# log_disk_count      = 0   # Number of 2000GB log disks per instance (0-24)

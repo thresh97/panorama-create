@@ -197,6 +197,33 @@ resource "azurerm_linux_virtual_machine" "panorama" {
   depends_on = [azurerm_marketplace_agreement.paloalto_panorama]
 }
 
+locals {
+  total_log_disks = var.instance_count * var.log_disk_count
+}
+
+resource "azurerm_managed_disk" "panorama_logs" {
+  count                = local.total_log_disks
+  name                 = (
+    count.index / var.log_disk_count == 0
+      ? "${local.full_prefix}-panorama-log-${count.index % var.log_disk_count + 1}"
+      : "${local.full_prefix}-panorama-${count.index / var.log_disk_count + 1}-log-${count.index % var.log_disk_count + 1}"
+  )
+  location             = azurerm_resource_group.mgmt.location
+  resource_group_name  = azurerm_resource_group.mgmt.name
+  storage_account_type = "Premium_LRS"
+  create_option        = "Empty"
+  disk_size_gb         = var.log_disk_size_gb
+  zone                 = tostring(count.index / var.log_disk_count + 1)
+}
+
+resource "azurerm_virtual_machine_data_disk_attachment" "panorama_logs" {
+  count              = local.total_log_disks
+  managed_disk_id    = azurerm_managed_disk.panorama_logs[count.index].id
+  virtual_machine_id = azurerm_linux_virtual_machine.panorama[count.index / var.log_disk_count].id
+  lun                = count.index % var.log_disk_count
+  caching            = "ReadWrite"
+}
+
 # --------------------------------------------------------------------------
 # 5. MIGRATION: moved blocks for existing single-instance deployments
 # --------------------------------------------------------------------------
@@ -273,6 +300,23 @@ variable "panorama_vm_size" {
 variable "mgmt_vnet_cidr" {
   type    = string
   default = "10.255.0.0/24"
+}
+
+variable "log_disk_count" {
+  type        = number
+  default     = 0
+  description = "Number of Premium_LRS log disks to attach to each Panorama instance (0–24). Each disk is log_disk_size_gb GB."
+
+  validation {
+    condition     = var.log_disk_count >= 0 && var.log_disk_count <= 24
+    error_message = "log_disk_count must be between 0 and 24."
+  }
+}
+
+variable "log_disk_size_gb" {
+  type        = number
+  default     = 2000
+  description = "Size in GB of each log disk. Default 2000."
 }
 
 # --------------------------------------------------------------------------
