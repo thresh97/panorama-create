@@ -157,21 +157,6 @@ resource "google_compute_instance" "panorama" {
   }
 }
 
-resource "google_compute_disk" "panorama_logs" {
-  count = var.log_disk_size_gb > 0 ? var.instance_count : 0
-  name  = count.index == 0 ? "${local.full_prefix}-panorama-logs" : "${local.full_prefix}-panorama-logs-${count.index + 1}"
-  type  = "pd-ssd"
-  zone  = (var.instance_count == 1 && var.zone != null) ? var.zone : data.google_compute_zones.available.names[count.index]
-  size  = var.log_disk_size_gb
-}
-
-resource "google_compute_attached_disk" "panorama_logs" {
-  count    = var.log_disk_size_gb > 0 ? var.instance_count : 0
-  disk     = google_compute_disk.panorama_logs[count.index].self_link
-  instance = google_compute_instance.panorama[count.index].self_link
-  zone     = (var.instance_count == 1 && var.zone != null) ? var.zone : data.google_compute_zones.available.names[count.index]
-}
-
 # --------------------------------------------------------------------------
 # 5. MIGRATION: moved blocks for existing single-instance deployments
 # --------------------------------------------------------------------------
@@ -255,12 +240,6 @@ variable "panorama_image_name" {
   type        = string
   default     = null
   description = "Explicit GCP image name override (e.g., 'panorama-1126'). If null, the latest image in the panorama_version family is used."
-}
-
-variable "log_disk_size_gb" {
-  type        = number
-  default     = 0
-  description = "Size in GB of an additional pd-ssd disk for Panorama logs. 0 = no additional disk. Recommended: 2000."
 }
 
 # --------------------------------------------------------------------------

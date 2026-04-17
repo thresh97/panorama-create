@@ -210,23 +210,6 @@ resource "aws_eip_association" "panorama" {
   allocation_id = aws_eip.panorama[count.index].id
 }
 
-resource "aws_ebs_volume" "panorama_logs" {
-  count             = var.log_disk_size_gb > 0 ? var.instance_count : 0
-  availability_zone = aws_subnet.panorama[count.index].availability_zone
-  size              = var.log_disk_size_gb
-  type              = "gp3"
-  tags = {
-    Name = count.index == 0 ? "${local.full_prefix}-panorama-logs" : "${local.full_prefix}-panorama-logs-${count.index + 1}"
-  }
-}
-
-resource "aws_volume_attachment" "panorama_logs" {
-  count       = var.log_disk_size_gb > 0 ? var.instance_count : 0
-  device_name = "/dev/sdb"
-  volume_id   = aws_ebs_volume.panorama_logs[count.index].id
-  instance_id = aws_instance.panorama[count.index].id
-}
-
 # --------------------------------------------------------------------------
 # 6. MIGRATION: moved blocks for existing single-instance deployments
 # --------------------------------------------------------------------------
@@ -319,12 +302,6 @@ variable "panorama_ami_id" {
   type        = string
   default     = null
   description = "Explicit AMI ID override. If null, the latest BYOL AMI matching panorama_version is looked up automatically."
-}
-
-variable "log_disk_size_gb" {
-  type        = number
-  default     = 0
-  description = "Size in GB of an additional gp3 EBS volume for Panorama logs. 0 = no additional disk. Recommended: 2000."
 }
 
 # --------------------------------------------------------------------------
