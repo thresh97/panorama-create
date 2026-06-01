@@ -37,6 +37,9 @@ resource "random_string" "deploy_id" {
 locals {
   deploy_prefix = var.deployment_code != null && var.deployment_code != "" ? var.deployment_code : random_string.deploy_id.result
   full_prefix   = "${local.deploy_prefix}-${var.prefix}"
+
+  effective_subnet_id = coalesce(var.existing_subnet_id, try(azurerm_subnet.panorama[0].id, null))
+  effective_pip_ids   = length(var.existing_public_ip_ids) > 0 ? var.existing_public_ip_ids : azurerm_public_ip.panorama_pip[*].id
 }
 
 # --------------------------------------------------------------------------
@@ -58,6 +61,7 @@ resource "azurerm_resource_group" "mgmt" {
 }
 
 resource "azurerm_virtual_network" "mgmt_vnet" {
+  count               = var.existing_subnet_id == null ? 1 : 0
   name                = "${local.full_prefix}-panorama-vnet"
   address_space       = [var.mgmt_vnet_cidr]
   location            = azurerm_resource_group.mgmt.location
@@ -67,13 +71,15 @@ resource "azurerm_virtual_network" "mgmt_vnet" {
 # Single subnet shared by all instances — Azure subnets are not AZ-scoped.
 # Instances are pinned to different zones via the VM and public IP zone argument.
 resource "azurerm_subnet" "panorama" {
+  count                = var.existing_subnet_id == null ? 1 : 0
   name                 = "panorama"
   resource_group_name  = azurerm_resource_group.mgmt.name
-  virtual_network_name = azurerm_virtual_network.mgmt_vnet.name
+  virtual_network_name = azurerm_virtual_network.mgmt_vnet[0].name
   address_prefixes     = [cidrsubnet(var.mgmt_vnet_cidr, 4, 0)]
 }
 
 resource "azurerm_network_security_group" "panorama" {
+  count               = var.existing_subnet_id == null ? 1 : 0
   name                = "${local.full_prefix}-panorama-nsg"
   location            = azurerm_resource_group.mgmt.location
   resource_group_name = azurerm_resource_group.mgmt.name
@@ -125,8 +131,9 @@ resource "azurerm_network_security_group" "panorama" {
 }
 
 resource "azurerm_subnet_network_security_group_association" "panorama" {
-  subnet_id                 = azurerm_subnet.panorama.id
-  network_security_group_id = azurerm_network_security_group.panorama.id
+  count                     = var.existing_subnet_id == null ? 1 : 0
+  subnet_id                 = azurerm_subnet.panorama[0].id
+  network_security_group_id = azurerm_network_security_group.panorama[0].id
 }
 
 # --------------------------------------------------------------------------
@@ -136,7 +143,7 @@ resource "azurerm_subnet_network_security_group_association" "panorama" {
 # Standard SKU public IPs support zone pinning. One per instance.
 # Zones 1, 2, 3 map to instances 0, 1, 2 respectively.
 resource "azurerm_public_ip" "panorama_pip" {
-  count               = var.instance_count
+  count               = length(var.existing_public_ip_ids) == 0 ? var.instance_count : 0
   name                = count.index == 0 ? "${local.full_prefix}-panorama-pip" : "${local.full_prefix}-panorama-pip-${count.index + 1}"
   location            = azurerm_resource_group.mgmt.location
   resource_group_name = azurerm_resource_group.mgmt.name
@@ -145,7 +152,6 @@ resource "azurerm_public_ip" "panorama_pip" {
   zones               = [tostring(count.index + 1)]
 }
 
-# Private IPs .4, .5, .6 within the /28 subnet.
 resource "azurerm_network_interface" "panorama_nic" {
   count               = var.instance_count
   name                = count.index == 0 ? "${local.full_prefix}-panorama-nic" : "${local.full_prefix}-panorama-nic-${count.index + 1}"
@@ -154,10 +160,9 @@ resource "azurerm_network_interface" "panorama_nic" {
 
   ip_configuration {
     name                          = "ipconfig1"
-    subnet_id                     = azurerm_subnet.panorama.id
-    private_ip_address_allocation = "Static"
-    private_ip_address            = cidrhost(cidrsubnet(var.mgmt_vnet_cidr, 4, 0), 4 + count.index)
-    public_ip_address_id          = azurerm_public_ip.panorama_pip[count.index].id
+    subnet_id                     = local.effective_subnet_id
+    private_ip_address_allocation = "Dynamic"
+    public_ip_address_id          = local.effective_pip_ids[count.index]
   }
 }
 
@@ -302,6 +307,23 @@ variable "mgmt_vnet_cidr" {
   default = "10.255.0.0/24"
 }
 
+variable "existing_subnet_id" {
+  type        = string
+  default     = null
+  description = "Resource ID of an existing subnet to deploy Panorama into. When set, no VNet, subnet, or NSG is created."
+}
+
+variable "existing_public_ip_ids" {
+  type        = list(string)
+  default     = []
+  description = "Resource IDs of existing Standard SKU public IPs, one per instance. When non-empty, no public IPs are created. Must have exactly instance_count entries."
+
+  validation {
+    condition     = length(var.existing_public_ip_ids) == 0 || length(var.existing_public_ip_ids) == var.instance_count
+    error_message = "existing_public_ip_ids must be empty or have exactly instance_count entries."
+  }
+}
+
 variable "log_disk_count" {
   type        = number
   default     = 0
@@ -323,13 +345,13 @@ variable "log_disk_size_gb" {
 # 7. OUTPUTS
 # --------------------------------------------------------------------------
 output "panorama_public_ip" {
-  description = "Public IP of the first Panorama instance. Use panorama_public_ips for all instances."
-  value       = azurerm_public_ip.panorama_pip[0].ip_address
+  description = "Public IP of the first Panorama instance (address when created; resource ID when using existing_public_ip_ids)."
+  value       = length(var.existing_public_ip_ids) > 0 ? var.existing_public_ip_ids[0] : azurerm_public_ip.panorama_pip[0].ip_address
 }
 
 output "panorama_public_ips" {
-  description = "Public IP addresses of all Panorama instances (index matches instance number)."
-  value       = azurerm_public_ip.panorama_pip[*].ip_address
+  description = "Public IP addresses of all Panorama instances (addresses when created; resource IDs when using existing_public_ip_ids)."
+  value       = length(var.existing_public_ip_ids) > 0 ? var.existing_public_ip_ids : azurerm_public_ip.panorama_pip[*].ip_address
 }
 
 output "panorama_private_ips" {
@@ -343,8 +365,8 @@ output "panorama_zones" {
 }
 
 output "panorama_vnet_id" {
-  description = "Full Azure resource ID of the management VNET. Paste this as private_panorama_vnet_id in the vmseries-architectures deployment."
-  value       = azurerm_virtual_network.mgmt_vnet.id
+  description = "Resource ID of the management VNET (only set when existing_subnet_id is not provided). Paste this as private_panorama_vnet_id in the vmseries-architectures deployment."
+  value       = var.existing_subnet_id == null ? azurerm_virtual_network.mgmt_vnet[0].id : null
 }
 
 output "environment_info" {
